@@ -1,0 +1,16 @@
+# Ignore runtime log
+/data/log.csv
+
+# Common Python ignores
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE/editor
+.vscode/
+.idea/
