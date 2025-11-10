@@ -2,33 +2,46 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import os
-import json # json 라이브러리 추가
+import json
+import gspread
+from gspread_dataframe import set_with_dataframe
 
-# --- 1. 설정 및 데이터 로딩 ---
+# --- 1. 설정 및 핵심 함수 정의 ---
 
-# 데이터 저장 경로 설정
 LOG_PATH = "data/log.csv"
 CHALLENGES_PATH = "data/challenges.json"
 
-# 로깅 함수 (이전 설계와 동일하게, 더 정교하게 구현)
 def log_event(session_id, user_id, problem_id, event_type, event_target, value_1=None, value_2=None):
-    """사용자의 모든 행동을 정교하게 기록하는 함수"""
+    """사용자의 모든 행동을 Google Sheet에 기록하는 함수"""
     timestamp = datetime.now()
     log_entry = {
         "timestamp": [timestamp], "session_id": [session_id], "user_id": [user_id],
         "problem_id": [problem_id], "event_type": [event_type], "event_target": [event_target],
-        "value_1": [value_1], "value_2": [value_2]
+        "value_1": [str(value_1)], "value_2": [str(value_2)] # 모든 값을 문자열로 변환
     }
-    
     df_entry = pd.DataFrame(log_entry)
 
-    if not os.path.exists(LOG_PATH):
-        df_entry.to_csv(LOG_PATH, index=False, encoding='utf-8-sig')
-    else:
-        df_entry.to_csv(LOG_PATH, mode='a', header=False, index=False, encoding='utf-8-sig')
+    try:
+        # Streamlit의 Secret 기능으로 인증 정보 가져오기
+        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+        # 'log_sheet'는 당신이 만든 Google Sheet의 이름입니다.
+        spreadsheet = gc.open("log") 
+        worksheet = spreadsheet.sheet1
+        
+        # DataFrame을 시트의 마지막 빈 행에 추가 (헤더 제외)
+        worksheet.append_rows(df_entry.values.tolist())
 
-# 문제 데이터 로드 함수
-@st.cache_data # Streamlit 캐시 기능으로, 파일이 바뀌지 않으면 다시 읽지 않음 (성능 향상)
+    except Exception as e:
+        # 클라우드가 아닌 로컬 환경이거나, 인증 실패 시 로컬 CSV에 대신 저장 (Fallback)
+        # st.error(f"Google Sheets에 연결할 수 없습니다: {e}") # 디버깅용
+        
+        log_path_local = "data/log.csv"
+        if not os.path.exists(log_path_local):
+            df_entry.to_csv(log_path_local, index=False, encoding='utf-8-sig')
+        else:
+            df_entry.to_csv(log_path_local, mode='a', header=False, index=False, encoding='utf-8-sig')
+
+@st.cache_data
 def load_challenges():
     """challenges.json 파일에서 문제 데이터를 불러오는 함수"""
     with open(CHALLENGES_PATH, 'r', encoding='utf-8') as f:
@@ -40,37 +53,39 @@ challenges = load_challenges()
 total_problems = len(challenges)
 
 if 'current_problem' not in st.session_state:
-    # 세션 상태 초기화
     st.session_state.current_problem = 0
     st.session_state.session_id = f"sess_{int(datetime.now().timestamp())}"
-    st.session_state.user_id = f"user_{int(datetime.now().timestamp())}" # 간단한 익명 ID
+    st.session_state.user_id = f"user_{int(datetime.now().timestamp())}"
     st.session_state.answers = [None] * total_problems
-    
-    # 시작 이벤트 기록
     log_event(st.session_state.session_id, st.session_state.user_id, 'N/A', 'SESSION', 'start')
 
-# --- 3. UI 렌더링 및 로직 처리 ---
+# --- 3. 메인 애플리케이션 렌더링 ---
 
 st.title("🧠 인지 프로파일링 챌린지")
-st.progress((st.session_state.current_problem) / total_problems) # 진행률 표시
 
-# 챌린지 종료 화면
-if st.session_state.current_problem >= total_problems:
-    st.success("챌린지를 완료했습니다! 참여해주셔서 감사합니다.")
-    st.balloons()
+# --- 3.1. 사용자 정보 수집 화면 ---
+if 'demographics_submitted' not in st.session_state:
+    st.info("더 나은 연구를 위해, 괜찮으시다면 아래 정보 제공에 협조해주시면 감사하겠습니다. (선택사항)")
     
-    # 종료 이벤트 기록
-    log_event(st.session_state.session_id, st.session_state.user_id, 'N/A', 'SESSION', 'end')
+    with st.form(key='demographics_form'):
+        age = st.selectbox("연령대를 선택해주세요.", ["선택 안 함", "10대", "20대", "30대", "40대 이상"])
+        gender = st.selectbox("성별을 선택해주세요.", ["선택 안 함", "남성", "여성", "기타"])
+        education = st.selectbox("최종 학력을 선택해주세요.", ["선택 안 함", "중/고등학생", "대학생", "대학원생", "기타"])
+        
+        submitted = st.form_submit_button("챌린지 시작하기")
+
+        if submitted:
+            user_info = {"age": age, "gender": gender, "education": education}
+            log_event(st.session_state.session_id, st.session_state.user_id, 'N/A', 
+                      'SURVEY', 'submit_demographics', value_1=user_info)
+            
+            st.session_state.demographics_submitted = True
+            st.rerun()
+
+# --- 3.2. 챌린지 진행 화면 ---
+elif st.session_state.current_problem < total_problems:
+    st.progress((st.session_state.current_problem) / total_problems)
     
-    # (선택) 결과 요약 보여주기
-    correct_answers = 0
-    for i, user_ans in enumerate(st.session_state.answers):
-        if str(user_ans) == str(challenges[i]['correct_answer']):
-            correct_answers += 1
-    st.write(f"총 {total_problems}문제 중 {correct_answers}문제를 맞혔습니다.")
-    
-else:
-    # 현재 문제 정보 가져오기
     problem_index = st.session_state.current_problem
     problem = challenges[problem_index]
     problem_id = problem['id']
@@ -80,27 +95,36 @@ else:
     st.markdown(problem['question'])
 
     user_answer = None
-    # 답변 유형에 따라 다른 입력 방식 제공
     if problem['answer_type'] == 'text_input':
         user_answer = st.text_input("정답:", key=f"answer_{problem_id}")
     elif problem['answer_type'] == 'multiple_choice':
-        user_answer = st.radio("선택:", options=problem['options'], key=f"answer_{problem_id}")
+        user_answer = st.radio("선택:", options=problem['options'], key=f"answer_{problem_id}", index=None)
 
-    # 버튼 레이아웃
     col1, col2 = st.columns([1, 1])
-
     with col1:
         if st.button("힌트 보기", key=f"hint_{problem_id}"):
             st.info(problem['hint'])
             log_event(st.session_state.session_id, st.session_state.user_id, problem_id, 'CLICK', 'hint_button')
-
     with col2:
         if st.button("다음 문제로", key=f"submit_{problem_id}"):
-            # 제출 이벤트 기록
             is_correct = (str(user_answer) == str(problem['correct_answer']))
             log_event(st.session_state.session_id, st.session_state.user_id, problem_id, 'SUBMIT', 'submit_button', user_answer, is_correct)
             
-            # 답변 저장 및 다음 문제로 상태 변경
             st.session_state.answers[problem_index] = user_answer
             st.session_state.current_problem += 1
-            st.rerun() # 화면을 즉시 새로고침하여 다음 문제로 넘어감
+            st.rerun()
+
+# --- 3.3. 챌린지 완료 화면 ---
+else:
+    st.success("챌린지를 완료했습니다! 참여해주셔서 감사합니다.")
+    st.balloons()
+    
+    if 'session_ended' not in st.session_state:
+        log_event(st.session_state.session_id, st.session_state.user_id, 'N/A', 'SESSION', 'end')
+        st.session_state.session_ended = True
+    
+    correct_answers = 0
+    for i, user_ans in enumerate(st.session_state.answers):
+        if str(user_ans) == str(challenges[i]['correct_answer']):
+            correct_answers += 1
+    st.write(f"총 {total_problems}문제 중 {correct_answers}문제를 맞혔습니다.")
