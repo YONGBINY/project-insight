@@ -55,18 +55,39 @@ if 'current_problem' not in st.session_state:
 
 st.title("🧠 인지 프로파일링 챌린지")
 
-# 3.1. 사용자 정보 수집 화면
+# 3.1. 사용자 정보 수집 화면 (디자인 수정됨)
 if 'demographics_submitted' not in st.session_state:
-    st.info("더 나은 연구를 위해, 괜찮으시다면 아래 정보 제공에 협조해주시면 감사하겠습니다. (선택사항)")
+    st.info("챌린지에 참여해주셔서 감사합니다! 💡")
+    
     with st.form(key='demographics_form'):
+        
+        # --- 1. 기프티콘 이벤트 섹션 ---
+        st.subheader("🎁 챌린지 완료 감사 기프티콘!")
+        st.markdown("참여해주신 분들 중 추첨을 통해 기프티콘을 드립니다. 원하시는 경우 이메일을 남겨주세요! (선택사항이며, 이벤트 목적 외에는 절대 사용되지 않습니다.)")
+        email = st.text_input("이메일 (기프티콘 추첨용)", placeholder="example@gmail.com")
+        
+        st.divider()
+
+        # --- 2. 연구용 정보 섹션 ---
+        st.markdown("**더 나은 연구를 위해, 괜찮으시다면 아래 정보도 제공해주세요. (선택사항)**")
         age = st.selectbox("연령대를 선택해주세요.", ["선택 안 함", "10대", "20대", "30대", "40대 이상"])
         gender = st.selectbox("성별을 선택해주세요.", ["선택 안 함", "남성", "여성", "기타"])
         education = st.selectbox("최종 학력을 선택해주세요.", ["선택 안 함", "중/고등학생", "대학생", "대학원생", "기타"])
         
+        # --- 3. 제출 버튼 ---
         if st.form_submit_button("챌린지 시작하기"):
-            user_info = {"age": age, "gender": gender, "education": education}
+            
+            user_info = {
+                "email": email if email else "선택 안 함", #
+                "age": age, 
+                "gender": gender, 
+                "education": education
+            }
+            
+            # 로그 이벤트에 user_info 전체 기록
             log_event(st.session_state.session_id, st.session_state.user_id, 'N/A', 
                       'SURVEY', 'submit_demographics', value_1=user_info)
+            
             st.session_state.demographics_submitted = True
             st.rerun()
 
