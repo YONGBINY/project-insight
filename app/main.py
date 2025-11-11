@@ -22,11 +22,11 @@ def log_event(session_id, user_id, problem_id, event_type, event_target, value_1
     try:
         gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
         spreadsheet = gc.open("log")
-        # [주의] "시트1"은 당신의 Google Sheet 탭 이름과 정확히 일치해야 합니다.
         worksheet = spreadsheet.worksheet("시트1") 
         worksheet.append_rows(df_entry.values.tolist())
+    except gspread.exceptions.GSpreadException as e:
+        print(f"GSpread Error: {e}")
     except Exception:
-        # 클라우드 인증 실패 시 로컬에 기록 (개발/테스트용 Fallback)
         log_path_local = "data/log.csv"
         if not os.path.exists(log_path_local):
             df_entry.to_csv(log_path_local, index=False, encoding='utf-8-sig')
@@ -38,6 +38,44 @@ def load_challenges():
     """JSON 파일에서 문제 데이터를 불러옵니다. (캐시 사용으로 성능 최적화)"""
     with open(CHALLENGES_PATH, 'r', encoding='utf-8') as f:
         return json.load(f)
+    
+def create_result_image(persona_details, stats):
+    """결과 데이터를 바탕으로 공유용 이미지를 생성합니다."""
+    # 1. 리소스 로드
+    template_path = "data/template.png" # 배경 이미지 경로
+    font_path = "data/DungGeunMo.ttf" # 당신이 다운로드한 폰트 파일 경로
+    
+    img = Image.open(template_path)
+    draw = ImageDraw.Draw(img)
+
+    # 2. 폰트 설정
+    try:
+        title_font = ImageFont.truetype(font_path, size=80)
+        desc_font = ImageFont.truetype(font_path, size=40)
+        stats_font = ImageFont.truetype(font_path, size=50)
+    except IOError: # 폰트 파일을 못 찾을 경우 기본 폰트 사용
+        title_font = ImageFont.load_default()
+        desc_font = ImageFont.load_default()
+        stats_font = ImageFont.load_default()
+
+
+    # 3. 텍스트 배치 (좌표는 템플릿 이미지에 맞게 조정 필요)
+    # 아이콘 & 유형 이름
+    draw.text((150, 200), f"{persona_details['icon']} {persona_details['name']}", font=title_font, fill="black")
+    
+    # 설명 (여러 줄로 나누기)
+    # textwrap 라이브러리를 사용하면 더 깔끔하게 자동 줄바꿈 가능
+    draw.text((150, 350), f"당신은 {persona_details['desc'][:20]}\n{persona_details['desc'][20:]}...", font=desc_font, fill="#333333")
+
+    # 통계 정보
+    draw.text((150, 600), f"정답률: {stats['correct_rate']:.0%}", font=stats_font, fill="blue")
+    draw.text((150, 700), f"소요 시간: {stats['total_time']:.0f}초", font=stats_font, fill="green")
+    draw.text((150, 800), f"힌트 사용: {stats['hint_count']}회", font=stats_font, fill="orange")
+    
+    # 4. 이미지를 메모리 버퍼에 저장 (파일로 저장하지 않음)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 # --- 2. 앱 상태 초기화 ---
 
@@ -121,14 +159,15 @@ elif st.session_state.current_problem < total_problems:
         st.session_state.hint_clicks += 1
         log_event(st.session_state.session_id, st.session_state.user_id, problem_id, 'CLICK', 'hint_button')
 
-    # --- [복원된 '다음 문제로' 버튼 로직] ---
-    # 이 부분이 누락되었습니다.
     if col2.button("다음 문제로", key=f"submit_{problem_id}"):
-        is_correct = (str(user_answer) == str(problem['correct_answer']))
-        log_event(st.session_state.session_id, st.session_state.user_id, problem_id, 'SUBMIT', 'submit_button', user_answer, is_correct)
-        st.session_state.answers[problem_index] = user_answer
-        st.session_state.current_problem += 1
-        st.rerun()
+        if user_answer is None or user_answer == "":
+            st.error("앗, 답변을 선택하거나 입력해주세요! 🤔")
+        else:
+            is_correct = (str(user_answer) == str(problem['correct_answer']))
+            log_event(st.session_state.session_id, st.session_state.user_id, problem_id, 'SUBMIT', 'submit_button', user_answer, is_correct)
+            st.session_state.answers[problem_index] = user_answer
+            st.session_state.current_problem += 1
+            st.rerun()
 
 # --- 3.3. 챌린지 완료 화면 ---
 else:
@@ -143,8 +182,6 @@ else:
 
         log_event(st.session_state.session_id, st.session_state.user_id, 'N/A', 'SESSION', 'end', value_1=total_duration_seconds)
         st.session_state.session_ended = True
-
-    # --- 실시간 규칙 기반 페르소나 분석 ---
 
     # 1. 최종 성적 및 행동 데이터 계산
     correct_answers = sum(1 for i, ans in enumerate(st.session_state.answers) if str(ans) == str(challenges[i]['correct_answer']))
@@ -214,3 +251,31 @@ else:
 
         **주변에 이 챌린지를 공유하여 더 똑똑한 분석 모델을 함께 만들어주세요!**
         """)
+
+    # --- 6. [추가] 결과 공유 기능 ---
+    st.divider()
+    st.subheader("💌 내 결과 공유하기")
+
+    # persona_details 딕셔너리에 'name' 필드 추가
+    persona_descriptions[persona_type]['name'] = persona_type 
+
+    # 통계 정보 딕셔너리 생성
+    stats_data = {
+        "correct_rate": correct_rate,
+        "total_time": total_time,
+        "hint_count": hint_count
+    }
+
+    # 이미지 생성 함수 호출
+    image_bytes = create_result_image(persona_descriptions.get(persona_type), stats_data)
+
+    # 생성된 이미지 보여주기
+    st.image(image_bytes, caption="아래 버튼을 눌러 이미지를 저장하고 공유해보세요!")
+
+    # 다운로드 버튼
+    st.download_button(
+        label="결과 이미지 저장하기 📥",
+        data=image_bytes,
+        file_name=f"my_persona_{persona_type}.png",
+        mime="image/png"
+    )
