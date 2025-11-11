@@ -12,34 +12,41 @@ LOG_PATH = "data/log.csv"
 CHALLENGES_PATH = "data/challenges.json"
 
 def log_event(session_id, user_id, problem_id, event_type, event_target, value_1=None, value_2=None):
-    """사용자의 모든 행동을 Google Sheet에 기록하는 함수"""
-    timestamp = datetime.now()
+    """사용자의 모든 행동을 Google Sheet에 기록하는 함수 (Timestamp 오류 수정 완료)"""
+    
+    # [핵심 수정]
+    # datetime.now()로 생성된 시간을 .strftime()을 사용해
+    # 'YYYY-MM-DD HH:MM:SS' 형태의 '문자열(String)'로 변환합니다.
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     log_entry = {
-        "timestamp": [timestamp], 
-        "session_id": [str(session_id)], # 안전을 위해 다른 필드도 문자열 변환 권장
-        "user_id": [str(user_id)],
-        "problem_id": [str(problem_id)], 
-        "event_type": [str(event_type)], 
-        "event_target": [str(event_target)],
-        "value_1": [str(value_1)], 
+        "timestamp": [timestamp],       # 이제 datetime 객체가 아닌 '문자열'입니다.
+        "session_id": [session_id],
+        "user_id": [user_id],
+        "problem_id": [problem_id],
+        "event_type": [event_type],
+        "event_target": [event_target],
+        "value_1": [str(value_1)],    # 기존 코드처럼 다른 값들도 안전하게 str() 처리
         "value_2": [str(value_2)]
     }
     df_entry = pd.DataFrame(log_entry)
 
     try:
-            gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-            spreadsheet = gc.open("log") 
-            worksheet = spreadsheet.worksheet("시트1")
-            
-            # DataFrame 값을 리스트로 변환하여 추가
-            worksheet.append_rows(df_entry.values.tolist())
+        # Streamlit의 Secret 기능으로 인증 정보 가져오기
+        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+        spreadsheet = gc.open("log") 
+        worksheet = spreadsheet.worksheet("시트1")
+        
+        # DataFrame을 시트의 마지막 빈 행에 추가 (헤더 제외)
+        worksheet.append_rows(df_entry.values.tolist())
 
     except Exception as e:
-        # 클라우드가 아닌 로컬 환경이거나, 인증 실패 시 로컬 CSV에 대신 저장 (Fallback)
-        # st.error(f"Google Sheets에 연결할 수 없습니다: {e}") # 디버깅용
-        
+        # [중요] 
+        # 이제 이 오류 메시지가 아닌 다른 메시지가 뜬다면, 
+        # 그때가 바로 '권한' 문제를 점검할 때입니다.
         st.error(f"⚠️ Google Sheets에 데이터를 기록하는 중 오류가 발생했습니다: {e}")
         
+        # (로컬 CSV Fallback 코드는 기존과 동일)
         log_path_local = "data/log.csv"
         if not os.path.exists(log_path_local):
             df_entry.to_csv(log_path_local, index=False, encoding='utf-8-sig')
