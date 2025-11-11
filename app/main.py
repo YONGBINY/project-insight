@@ -26,7 +26,7 @@ def log_event(session_id, user_id, problem_id, event_type, event_target, value_1
         gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
         # 'log_sheet'는 당신이 만든 Google Sheet의 이름입니다.
         spreadsheet = gc.open("log") 
-        worksheet = spreadsheet.sheet1
+        worksheet = spreadsheet.worksheet("시트1")
         
         # DataFrame을 시트의 마지막 빈 행에 추가 (헤더 제외)
         worksheet.append_rows(df_entry.values.tolist())
@@ -34,6 +34,8 @@ def log_event(session_id, user_id, problem_id, event_type, event_target, value_1
     except Exception as e:
         # 클라우드가 아닌 로컬 환경이거나, 인증 실패 시 로컬 CSV에 대신 저장 (Fallback)
         # st.error(f"Google Sheets에 연결할 수 없습니다: {e}") # 디버깅용
+        
+        st.error(f"⚠️ Google Sheets에 데이터를 기록하는 중 오류가 발생했습니다: {e}")
         
         log_path_local = "data/log.csv"
         if not os.path.exists(log_path_local):
