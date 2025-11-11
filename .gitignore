@@ -1,6 +1,7 @@
 # Ignore runtime log
 /data/log.csv
 /project-insight-477822-101395f3938d.json
+/.streamlit/secrets.toml
 
 # Common Python ignores
 __pycache__/
