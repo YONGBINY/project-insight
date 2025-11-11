@@ -96,7 +96,7 @@ if 'demographics_submitted' not in st.session_state:
             st.session_state.demographics_submitted = True
             st.rerun()
 
-# 3.2. 챌린지 진행 화면
+# --- 3.2. 챌린지 진행 화면 ---
 elif st.session_state.current_problem < total_problems:
     st.progress(st.session_state.current_problem / total_problems)
     
@@ -118,11 +118,17 @@ elif st.session_state.current_problem < total_problems:
     col1, col2 = st.columns([1, 1])
     if col1.button("힌트 보기", key=f"hint_{problem_id}"):
         st.info(problem['hint'])
-        
-        # [추가] 힌트 클릭 카운트 증가
         st.session_state.hint_clicks += 1
-
         log_event(st.session_state.session_id, st.session_state.user_id, problem_id, 'CLICK', 'hint_button')
+
+    # --- [복원된 '다음 문제로' 버튼 로직] ---
+    # 이 부분이 누락되었습니다.
+    if col2.button("다음 문제로", key=f"submit_{problem_id}"):
+        is_correct = (str(user_answer) == str(problem['correct_answer']))
+        log_event(st.session_state.session_id, st.session_state.user_id, problem_id, 'SUBMIT', 'submit_button', user_answer, is_correct)
+        st.session_state.answers[problem_index] = user_answer
+        st.session_state.current_problem += 1
+        st.rerun()
 
 # --- 3.3. 챌린지 완료 화면 ---
 else:
