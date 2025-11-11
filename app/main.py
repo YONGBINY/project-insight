@@ -263,35 +263,56 @@ else:
     st.divider()
     st.subheader("💌 내 결과 공유하기")
 
-    # "결과 이미지 보기 & 저장" 버튼 생성
-    if st.button("결과 이미지 보기 & 저장 🖼️"):
-        st.session_state.show_image = True
+    if st.session_state.get('show_image', False):
+        # <<< 수정된 부분 >>>  -- 구버전에서도 동작하도록 st.expander 사용
+        # Streamlit 1.30 이상이면 원래대로 st.dialog 사용
+        if st.__version__ >= "1.30":
+            # ✔️ 최신 버전이면 기존 로직 그대로 사용 (컨텍스트 매니저)
+            with st.dialog("나의 문제 해결 스타일", dismissible=True):
+                # ------------------- 이미지·버튼 공통 로직 -------------------
+                details = persona_descriptions.get(persona_type)
+                details['name'] = persona_type
+                stats_data = {
+                    "correct_rate": correct_rate,
+                    "total_time": total_time,
+                    "hint_count": hint_count
+                }
 
-    # st.session_state를 사용하여 다이얼로그 상태 관리
-    if 'show_image' in st.session_state and st.session_state.show_image:
-        with st.dialog("나의 문제 해결 스타일", dismissible=True):
-            
-            # 페르소나 및 통계 데이터 준비
-            details = persona_descriptions.get(persona_type)
-            details['name'] = persona_type
-            stats_data = {
-                "correct_rate": correct_rate,
-                "total_time": total_time,
-                "hint_count": hint_count
-            }
-            
-            # 이미지 생성 및 표시
-            image_bytes = create_result_image(details, stats_data)
-            st.image(image_bytes, caption="아래 버튼을 눌러 이미지를 저장하고 공유해보세요!")
+                image_bytes = create_result_image(details, stats_data)
+                st.image(image_bytes, caption="아래 버튼을 눌러 이미지를 저장하고 공유해보세요!")
 
-            # 다운로드 버튼
-            st.download_button(
-                label="이미지 저장하기 📥",
-                data=image_bytes,
-                file_name=f"my_persona_{persona_type}.png",
-                mime="image/png"
-            )
-            # '닫기' 버튼을 누르면 다이얼로그가 사라지도록 상태 변경
-            if st.button("닫기"):
-                st.session_state.show_image = False
-                st.rerun()
+                st.download_button(
+                    label="이미지 저장하기 📥",
+                    data=image_bytes,
+                    file_name=f"my_persona_{persona_type}.png",
+                    mime="image/png"
+                )
+                # ----- 닫기 ----------
+                if st.button("닫기"):
+                    st.session_state.show_image = False
+                    st.rerun()
+        else:
+            # 👇 구버전에서는 st.expander 로 대체
+            with st.expander("💬 나의 문제 해결 스타일", expanded=True):
+                # ------------------- 이미지·버튼 공통 로직 (위와 동일) -------------------
+                details = persona_descriptions.get(persona_type)
+                details['name'] = persona_type
+                stats_data = {
+                    "correct_rate": correct_rate,
+                    "total_time": total_time,
+                    "hint_count": hint_count
+                }
+
+                image_bytes = create_result_image(details, stats_data)
+                st.image(image_bytes, caption="아래 버튼을 눌러 이미지를 저장하고 공유해보세요!")
+
+                st.download_button(
+                    label="이미지 저장하기 📥",
+                    data=image_bytes,
+                    file_name=f"my_persona_{persona_type}.png",
+                    mime="image/png"
+                )
+                # ----- 닫기 ----------
+                if st.button("닫기"):
+                    st.session_state.show_image = False
+                    st.rerun()
