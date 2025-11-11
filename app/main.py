@@ -6,6 +6,7 @@ import json
 import gspread
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
+import textwrap
 
 # --- 1. 초기 설정 및 함수 정의 ---
 
@@ -44,8 +45,8 @@ def load_challenges():
 def create_result_image(persona_details, stats):
     """결과 데이터를 바탕으로 공유용 이미지를 생성합니다."""
     # 1. 리소스 로드
-    template_path = "data/template.png" # 배경 이미지 경로
-    font_path = "data/DungGeunMo.ttf" # 당신이 다운로드한 폰트 파일 경로
+    template_path = "data/template.png"
+    font_path = "data/DungGeunMo.ttf"
     
     img = Image.open(template_path)
     draw = ImageDraw.Draw(img)
@@ -60,19 +61,23 @@ def create_result_image(persona_details, stats):
         desc_font = ImageFont.load_default()
         stats_font = ImageFont.load_default()
 
-
-    # 3. 텍스트 배치 (좌표는 템플릿 이미지에 맞게 조정 필요)
-    # 아이콘 & 유형 이름
-    draw.text((150, 200), f"{persona_details['icon']} {persona_details['name']}", font=title_font, fill="black")
+    img_width, img_height = img.size
     
-    # 설명 (여러 줄로 나누기)
-    # textwrap 라이브러리를 사용하면 더 깔끔하게 자동 줄바꿈 가능
-    draw.text((150, 350), f"당신은 {persona_details['desc'][:20]}\n{persona_details['desc'][20:]}...", font=desc_font, fill="#333333")
+    # 3. 텍스트 배치 (중앙 정렬 적용)
+    # 아이콘 & 유형 이름
+    draw.text((img_width / 2, 200), f"{persona_details['icon']} {persona_details['name']}", font=title_font, fill="black", anchor="ms")
+
+    # 설명 (자동 줄바꿈 및 중앙 정렬)
+    desc_lines = textwrap.wrap(persona_details['desc'], width=25) # width 값으로 줄 길이를 조정
+    y_text = 350
+    for line in desc_lines:
+        draw.text((img_width / 2, y_text), line, font=desc_font, fill="#333333", anchor="ms")
+        y_text += desc_font.getsize(line)[1] + 10 # 줄 간격
 
     # 통계 정보
-    draw.text((150, 600), f"정답률: {stats['correct_rate']:.0%}", font=stats_font, fill="blue")
-    draw.text((150, 700), f"소요 시간: {stats['total_time']:.0f}초", font=stats_font, fill="green")
-    draw.text((150, 800), f"힌트 사용: {stats['hint_count']}회", font=stats_font, fill="orange")
+    draw.text((img_width / 2, 600), f"정답률: {stats['correct_rate']:.0%}", font=stats_font, fill="blue", anchor="ms")
+    draw.text((img_width / 2, 700), f"소요 시간: {stats['total_time']:.0f}초", font=stats_font, fill="green", anchor="ms")
+    draw.text((img_width / 2, 800), f"힌트 사용: {stats['hint_count']}회", font=stats_font, fill="orange", anchor="ms")
     
     # 4. 이미지를 메모리 버퍼에 저장 (파일로 저장하지 않음)
     buf = BytesIO()
@@ -258,26 +263,35 @@ else:
     st.divider()
     st.subheader("💌 내 결과 공유하기")
 
-    # persona_details 딕셔너리에 'name' 필드 추가
-    persona_descriptions[persona_type]['name'] = persona_type 
+    # "결과 이미지 보기 & 저장" 버튼 생성
+    if st.button("결과 이미지 보기 & 저장 🖼️"):
+        st.session_state.show_image = True
 
-    # 통계 정보 딕셔너리 생성
-    stats_data = {
-        "correct_rate": correct_rate,
-        "total_time": total_time,
-        "hint_count": hint_count
-    }
+    # st.session_state를 사용하여 다이얼로그 상태 관리
+    if 'show_image' in st.session_state and st.session_state.show_image:
+        with st.dialog("나의 문제 해결 스타일", dismissible=True):
+            
+            # 페르소나 및 통계 데이터 준비
+            details = persona_descriptions.get(persona_type)
+            details['name'] = persona_type
+            stats_data = {
+                "correct_rate": correct_rate,
+                "total_time": total_time,
+                "hint_count": hint_count
+            }
+            
+            # 이미지 생성 및 표시
+            image_bytes = create_result_image(details, stats_data)
+            st.image(image_bytes, caption="아래 버튼을 눌러 이미지를 저장하고 공유해보세요!")
 
-    # 이미지 생성 함수 호출
-    image_bytes = create_result_image(persona_descriptions.get(persona_type), stats_data)
-
-    # 생성된 이미지 보여주기
-    st.image(image_bytes, caption="아래 버튼을 눌러 이미지를 저장하고 공유해보세요!")
-
-    # 다운로드 버튼
-    st.download_button(
-        label="결과 이미지 저장하기 📥",
-        data=image_bytes,
-        file_name=f"my_persona_{persona_type}.png",
-        mime="image/png"
-    )
+            # 다운로드 버튼
+            st.download_button(
+                label="이미지 저장하기 📥",
+                data=image_bytes,
+                file_name=f"my_persona_{persona_type}.png",
+                mime="image/png"
+            )
+            # '닫기' 버튼을 누르면 다이얼로그가 사라지도록 상태 변경
+            if st.button("닫기"):
+                st.session_state.show_image = False
+                st.rerun()
