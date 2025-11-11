@@ -4,6 +4,8 @@ from datetime import datetime
 import os
 import json
 import gspread
+from PIL import Image, ImageDraw, ImageFont
+from io import BytesIO
 
 # --- 1. 초기 설정 및 함수 정의 ---
 
