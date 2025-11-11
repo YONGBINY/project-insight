@@ -15,9 +15,14 @@ def log_event(session_id, user_id, problem_id, event_type, event_target, value_1
     """사용자의 모든 행동을 Google Sheet에 기록하는 함수"""
     timestamp = datetime.now()
     log_entry = {
-        "timestamp": [timestamp], "session_id": [session_id], "user_id": [user_id],
-        "problem_id": [problem_id], "event_type": [event_type], "event_target": [event_target],
-        "value_1": [str(value_1)], "value_2": [str(value_2)] # 모든 값을 문자열로 변환
+        "timestamp": [timestamp], 
+        "session_id": [str(session_id)], # 안전을 위해 다른 필드도 문자열 변환 권장
+        "user_id": [str(user_id)],
+        "problem_id": [str(problem_id)], 
+        "event_type": [str(event_type)], 
+        "event_target": [str(event_target)],
+        "value_1": [str(value_1)], 
+        "value_2": [str(value_2)]
     }
     df_entry = pd.DataFrame(log_entry)
 
