@@ -27,14 +27,12 @@ def log_event(session_id, user_id, problem_id, event_type, event_target, value_1
     df_entry = pd.DataFrame(log_entry)
 
     try:
-        # Streamlit의 Secret 기능으로 인증 정보 가져오기
-        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-        # 'log_sheet'는 당신이 만든 Google Sheet의 이름입니다.
-        spreadsheet = gc.open("log") 
-        worksheet = spreadsheet.worksheet("시트1")
-        
-        # DataFrame을 시트의 마지막 빈 행에 추가 (헤더 제외)
-        worksheet.append_rows(df_entry.values.tolist())
+            gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+            spreadsheet = gc.open("log") 
+            worksheet = spreadsheet.worksheet("시트1")
+            
+            # DataFrame 값을 리스트로 변환하여 추가
+            worksheet.append_rows(df_entry.values.tolist())
 
     except Exception as e:
         # 클라우드가 아닌 로컬 환경이거나, 인증 실패 시 로컬 CSV에 대신 저장 (Fallback)
