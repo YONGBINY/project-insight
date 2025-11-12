@@ -145,7 +145,7 @@ if 'current_problem' not in st.session_state:
     st.session_state.show_hint_current = False  # 힌트가 켜져있는지 확인
     st.session_state.submit_warning = None  # 제출 시 경고 메시지 저장
 
-    log_event(st.session_state.session_id, st.session_state.user_id, 'N/A', 'SESSION', 'start')
+    # log_event(st.session_state.session_id, st.session_state.user_id, 'N/A', 'SESSION', 'start') # UptimeMonitorBot Block
 
 # --- 3. 애플리케이션 UI 렌더링 ---
 
@@ -168,7 +168,13 @@ if 'demographics_submitted' not in st.session_state:
         education = st.selectbox("최종 학력을 선택해주세요.", ["선택 안 함", "중/고등학생", "대학생", "대학원생", "기타"])
 
         if st.form_submit_button("챌린지 시작하기"):
-            user_info = {"email": email, "age": age, "gender": gender, "education": education}
+            log_event(st.session_state.session_id, st.session_state.user_id, 'N/A', 'SESSION', 'start')
+            user_info = {
+                "email": email,
+                "age": age,
+                "gender": gender,
+                "education": education
+            }
             log_event(st.session_state.session_id, st.session_state.user_id, 'N/A', 'SURVEY', 'submit_demographics',
                       value_1=user_info)
             st.session_state.demographics_submitted = True
