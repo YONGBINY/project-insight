@@ -12,6 +12,7 @@ import textwrap
 
 CHALLENGES_PATH = "data/challenges.json"
 
+
 def log_event(session_id, user_id, problem_id, event_type, event_target, value_1=None, value_2=None):
     """사용자의 행동 로그를 Google Sheet에 기록합니다."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -23,66 +24,108 @@ def log_event(session_id, user_id, problem_id, event_type, event_target, value_1
     df_entry = pd.DataFrame(log_entry)
 
     try:
-        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-        spreadsheet = gc.open("log")
-        worksheet = spreadsheet.worksheet("시트1") 
-        worksheet.append_rows(df_entry.values.tolist())
-    except gspread.exceptions.GSpreadException as e:
-        print(f"GSpread Error: {e}")
-    except Exception:
+        if "gcp_service_account" in st.secrets:
+            gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+            spreadsheet = gc.open("log")
+            worksheet = spreadsheet.worksheet("시트1")
+            worksheet.append_rows(df_entry.values.tolist())
+    except Exception as e:
+        print(f"Log Error: {e}")
+        # 로컬 백업
         log_path_local = "data/log.csv"
+        os.makedirs("data", exist_ok=True)
         if not os.path.exists(log_path_local):
             df_entry.to_csv(log_path_local, index=False, encoding='utf-8-sig')
         else:
             df_entry.to_csv(log_path_local, mode='a', header=False, index=False, encoding='utf-8-sig')
 
+
 @st.cache_data
 def load_challenges():
-    """JSON 파일에서 문제 데이터를 불러옵니다. (캐시 사용으로 성능 최적화)"""
     with open(CHALLENGES_PATH, 'r', encoding='utf-8') as f:
         return json.load(f)
-    
+
+
 def create_result_image(persona_details, stats):
-    """결과 데이터를 바탕으로 공유용 이미지를 생성합니다."""
-    # 1. 리소스 로드
     template_path = "data/template.png"
     font_path = "data/DungGeunMo.ttf"
-    
-    img = Image.open(template_path)
+
+    # 이미지 없으면 생성 (에러 방지용)
+    if not os.path.exists(template_path):
+        img = Image.new('RGB', (800, 1000), color=(255, 255, 255))
+    else:
+        img = Image.open(template_path)
+
     draw = ImageDraw.Draw(img)
 
-    # 2. 폰트 설정
     try:
         title_font = ImageFont.truetype(font_path, size=80)
         desc_font = ImageFont.truetype(font_path, size=40)
         stats_font = ImageFont.truetype(font_path, size=50)
-    except IOError: # 폰트 파일을 못 찾을 경우 기본 폰트 사용
+    except IOError:
         title_font = ImageFont.load_default()
         desc_font = ImageFont.load_default()
         stats_font = ImageFont.load_default()
 
     img_width, img_height = img.size
-    
-    # 3. 텍스트 배치 (중앙 정렬 적용)
-    # 아이콘 & 유형 이름
-    draw.text((img_width / 2, 200), f"{persona_details['icon']} {persona_details['name']}", font=title_font, fill="black", anchor="ms")
 
-    # 설명 (자동 줄바꿈 및 중앙 정렬)
-    desc_lines = textwrap.wrap(persona_details['desc'], width=25) # width 값으로 줄 길이를 조정
+    draw.text((img_width / 2, 200), f"{persona_details['icon']} {persona_details['name']}", font=title_font,
+              fill="black", anchor="ms")
+
+    desc_lines = textwrap.wrap(persona_details['desc'], width=25)
     y_text = 350
     for line in desc_lines:
         draw.text((img_width / 2, y_text), line, font=desc_font, fill="#333333", anchor="ms")
-        y_text += desc_font.getsize(line)[1] + 10 # 줄 간격
+        # getbbox를 사용한 높이 계산 (pillow 10 대응)
+        bbox = desc_font.getbbox(line)
+        y_text += (bbox[3] - bbox[1]) + 10
 
-    # 통계 정보
     draw.text((img_width / 2, 600), f"정답률: {stats['correct_rate']:.0%}", font=stats_font, fill="blue", anchor="ms")
     draw.text((img_width / 2, 700), f"소요 시간: {stats['total_time']:.0f}초", font=stats_font, fill="green", anchor="ms")
     draw.text((img_width / 2, 800), f"힌트 사용: {stats['hint_count']}회", font=stats_font, fill="orange", anchor="ms")
-    
-    # 4. 이미지를 메모리 버퍼에 저장 (파일로 저장하지 않음)
+
     buf = BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+def handle_hint(problem_id):
+    """힌트 버튼 클릭 시 실행되는 콜백"""
+    st.session_state.hint_clicks += 1
+    st.session_state.show_hint_current = True  # 현재 문제에 대해 힌트를 보여줌
+    log_event(st.session_state.session_id, st.session_state.user_id, problem_id, 'CLICK', 'hint_button')
+
+
+def handle_submit(problem_id, correct_answer):
+    """다음 문제 버튼 클릭 시 실행되는 콜백"""
+    # 1. 현재 입력된 값 가져오기
+    input_key = f"answer_{problem_id}"
+    user_answer = st.session_state.get(input_key)
+
+    # 2. 유효성 검사 (값이 없으면 경고 표시 후 중단)
+    if user_answer is None or user_answer == "":
+        st.session_state.submit_warning = "앗, 답변을 선택하거나 입력해주세요! 🤔"
+        return
+
+    # 3. 값이 있으면 경고 초기화 및 로직 진행
+    st.session_state.submit_warning = None
+
+    # 정답 여부 판단
+    is_correct = (str(user_answer) == str(correct_answer))
+
+    # 로그 기록
+    log_event(st.session_state.session_id, st.session_state.user_id, problem_id, 'SUBMIT', 'submit_button', user_answer,
+              is_correct)
+
+    # 정답 저장
+    current_idx = st.session_state.current_problem
+    st.session_state.answers[current_idx] = user_answer
+
+    # 상태 업데이트 (다음 문제로 이동)
+    st.session_state.current_problem += 1
+
+    # [중요] 다음 문제로 넘어가므로 문제별 상태 초기화
+    st.session_state.show_hint_current = False
+
 
 # --- 2. 앱 상태 초기화 ---
 
@@ -94,57 +137,47 @@ if 'current_problem' not in st.session_state:
     st.session_state.session_id = f"sess_{int(datetime.now().timestamp())}"
     st.session_state.user_id = f"user_{int(datetime.now().timestamp())}"
     st.session_state.answers = [None] * total_problems
-    
-    # [추가] 시작 시간과 힌트 카운트 초기화
+
     st.session_state.start_time = datetime.now()
     st.session_state.hint_clicks = 0
-    
+
+    # [NEW] UI 제어용 상태 변수
+    st.session_state.show_hint_current = False  # 힌트가 켜져있는지 확인
+    st.session_state.submit_warning = None  # 제출 시 경고 메시지 저장
+
     log_event(st.session_state.session_id, st.session_state.user_id, 'N/A', 'SESSION', 'start')
 
 # --- 3. 애플리케이션 UI 렌더링 ---
 
 st.title("🧠 인지 프로파일링 챌린지")
 
-# 3.1. 사용자 정보 수집 화면 (디자인 수정됨)
+# 3.1. 사용자 정보 수집 화면
 if 'demographics_submitted' not in st.session_state:
     st.info("챌린지에 참여해주셔서 감사합니다! 💡")
-    
+
     with st.form(key='demographics_form'):
-        
-        # --- 1. 기프티콘 이벤트 섹션 ---
-        st.subheader("🎁 챌린지 완료 감사 기프티콘!")
-        st.markdown("참여해주신 분들 중 추첨을 통해 기프티콘을 드립니다. 원하시는 경우 이메일을 남겨주세요! (선택사항이며, 이벤트 목적 외에는 절대 사용되지 않습니다.)")
+        st.subheader("🎁 챌린지 완료 감사 기프티콘!\n(노트를 준비하시면 더 편하게 테스트 하실 수 있어요! 😎)")
+        st.markdown("참여해주신 분들 중 추첨을 통해 기프티콘을 드립니다. (선택사항)")
         email = st.text_input("이메일 (기프티콘 추첨용)", placeholder="example@gmail.com")
-        
+
         st.divider()
 
-        # --- 2. 연구용 정보 섹션 ---
         st.markdown("**더 나은 연구를 위해, 괜찮으시다면 아래 정보도 제공해주세요. (선택사항)**")
         age = st.selectbox("연령대를 선택해주세요.", ["선택 안 함", "10대", "20대", "30대", "40대 이상"])
         gender = st.selectbox("성별을 선택해주세요.", ["선택 안 함", "남성", "여성", "기타"])
         education = st.selectbox("최종 학력을 선택해주세요.", ["선택 안 함", "중/고등학생", "대학생", "대학원생", "기타"])
-        
-        # --- 3. 제출 버튼 ---
+
         if st.form_submit_button("챌린지 시작하기"):
-            
-            user_info = {
-                "email": email if email else "선택 안 함", #
-                "age": age, 
-                "gender": gender, 
-                "education": education
-            }
-            
-            # 로그 이벤트에 user_info 전체 기록
-            log_event(st.session_state.session_id, st.session_state.user_id, 'N/A', 
-                      'SURVEY', 'submit_demographics', value_1=user_info)
-            
+            user_info = {"email": email, "age": age, "gender": gender, "education": education}
+            log_event(st.session_state.session_id, st.session_state.user_id, 'N/A', 'SURVEY', 'submit_demographics',
+                      value_1=user_info)
             st.session_state.demographics_submitted = True
             st.rerun()
 
 # --- 3.2. 챌린지 진행 화면 ---
 elif st.session_state.current_problem < total_problems:
     st.progress(st.session_state.current_problem / total_problems)
-    
+
     problem_index = st.session_state.current_problem
     problem = challenges[problem_index]
     problem_id = problem['id']
@@ -153,56 +186,69 @@ elif st.session_state.current_problem < total_problems:
     st.subheader(f"Question {problem_index + 1}/{total_problems}")
     st.markdown(problem['question'])
 
+    # 입력 위젯 생성
     answer_type = problem.get('answer_type', 'text_input')
-    user_answer = None
     if answer_type == 'text_input':
-        user_answer = st.text_input("정답:", key=f"answer_{problem_id}")
+        st.text_input("정답:", key=f"answer_{problem_id}")
     elif answer_type == 'multiple_choice':
-        user_answer = st.radio("선택:", options=problem['options'], key=f"answer_{problem_id}", index=None)
+        st.radio("선택:", options=problem['options'], key=f"answer_{problem_id}", index=None)
+
+    # 경고 메시지 표시 (콜백에서 설정됨)
+    if st.session_state.submit_warning:
+        st.error(st.session_state.submit_warning)
+
+    # 힌트 메시지 표시 (콜백에서 설정됨)
+    if st.session_state.show_hint_current:
+        st.info(problem['hint'])
 
     col1, col2 = st.columns([1, 1])
-    if col1.button("힌트 보기", key=f"hint_{problem_id}"):
-        st.info(problem['hint'])
-        st.session_state.hint_clicks += 1
-        log_event(st.session_state.session_id, st.session_state.user_id, problem_id, 'CLICK', 'hint_button')
 
-    if col2.button("다음 문제로", key=f"submit_{problem_id}"):
-        if user_answer is None or user_answer == "":
-            st.error("앗, 답변을 선택하거나 입력해주세요! 🤔")
-        else:
-            is_correct = (str(user_answer) == str(problem['correct_answer']))
-            log_event(st.session_state.session_id, st.session_state.user_id, problem_id, 'SUBMIT', 'submit_button', user_answer, is_correct)
-            st.session_state.answers[problem_index] = user_answer
-            st.session_state.current_problem += 1
-            st.rerun()
+    # [NEW] 버튼 - on_click 사용
+    # 힌트 버튼
+    col1.button(
+        "힌트 보기",
+        key=f"hint_btn_{problem_id}",
+        on_click=handle_hint,
+        args=(problem_id,)  # 튜플로 전달
+    )
+
+    # 다음 문제 버튼
+    col2.button(
+        "다음 문제로",
+        key=f"submit_btn_{problem_id}",
+        on_click=handle_submit,
+        args=(problem_id, problem['correct_answer'])
+    )
 
 # --- 3.3. 챌린지 완료 화면 ---
 else:
-    st.success("챌린지를 완료했습니다! 당신의 문제 해결 스타일을 분석해봤어요.")
-    st.balloons()
-    
+    # 3. [수정] 완료 메시지를 Toast(일시적 팝업)로 변경
+    # 세션이 처음 종료되는 시점에만 실행
     if 'session_ended' not in st.session_state:
-        # 종료 시간 기록 및 총 소요 시간 계산
+        st.toast("챌린지를 완료했습니다! 당신의 문제 해결 스타일을 분석해봤어요.", icon="🎉")
+        st.balloons()
+
         end_time = datetime.now()
         total_duration_seconds = (end_time - st.session_state.start_time).total_seconds()
-        st.session_state.total_duration = total_duration_seconds # 나중에 사용할 수 있도록 저장
+        st.session_state.total_duration = total_duration_seconds
 
-        log_event(st.session_state.session_id, st.session_state.user_id, 'N/A', 'SESSION', 'end', value_1=total_duration_seconds)
+        log_event(st.session_state.session_id, st.session_state.user_id, 'N/A', 'SESSION', 'end',
+                  value_1=total_duration_seconds)
         st.session_state.session_ended = True
 
-    # 1. 최종 성적 및 행동 데이터 계산
-    correct_answers = sum(1 for i, ans in enumerate(st.session_state.answers) if str(ans) == str(challenges[i]['correct_answer']))
+    # 1. 통계 계산
+    correct_answers = sum(
+        1 for i, ans in enumerate(st.session_state.answers) if str(ans) == str(challenges[i]['correct_answer']))
     correct_rate = correct_answers / total_problems
-    total_time = st.session_state.get('total_duration', 300) # 혹시 모를 오류 방지 기본값
+    total_time = st.session_state.get('total_duration', 300)
     hint_count = st.session_state.get('hint_clicks', 0)
 
-    # 2. 페르소나 판별 로직
-    persona_type = "균형잡힌 해결사" # 기본값
-
-    TIME_THRESHOLD_FAST = 180  # 3분
-    TIME_THRESHOLD_SLOW = 420  # 7분
-    ACCURACY_THRESHOLD_HIGH = 0.77 # 7/9 (약 77%)
-    ACCURACY_THRESHOLD_LOW = 0.44  # 4/9 (약 44%)
+    # 2. 페르소나 판별
+    persona_type = "균형잡힌 해결사"
+    TIME_THRESHOLD_FAST = 180;
+    TIME_THRESHOLD_SLOW = 420
+    ACCURACY_THRESHOLD_HIGH = 0.77;
+    ACCURACY_THRESHOLD_LOW = 0.44
 
     if total_time < TIME_THRESHOLD_FAST and correct_rate >= ACCURACY_THRESHOLD_HIGH:
         persona_type = "신속한 전략가"
@@ -210,109 +256,58 @@ else:
         persona_type = "신중한 탐험가"
     elif total_time < TIME_THRESHOLD_FAST and correct_rate < ACCURACY_THRESHOLD_HIGH:
         persona_type = "직관적인 해결사"
-    elif correct_rate <= ACCURACY_THRESHOLD_LOW or (total_time > TIME_THRESHOLD_SLOW and correct_rate < ACCURACY_THRESHOLD_HIGH):
+    elif correct_rate <= ACCURACY_THRESHOLD_LOW or (
+            total_time > TIME_THRESHOLD_SLOW and correct_rate < ACCURACY_THRESHOLD_HIGH):
         persona_type = "성실한 등반가"
 
-    # 3. 각 페르소나에 대한 설명 딕셔너리
     persona_descriptions = {
-        "신속한 전략가": {
-            "icon": "⚡️", "desc": "문제의 핵심을 빠르게 파악하고, 효율적으로 정답을 찾아내는 데 능숙합니다. 마치 날카로운 검사처럼, 복잡한 문제도 군더더기 없이 해결하는 스타일입니다.", "action": "가끔은 너무 빠른 속도 때문에 놓치는 '함정'이 있을 수 있습니다. 중요한 문제 앞에서는 한 번만 더 검토하는 습관을 들인다면 완벽에 가까워질 것입니다."
-        },
-        "신중한 탐험가": {
-            "icon": "🗺️", "desc": "돌다리도 두들겨 보고 건너는 신중한 스타일의 문제 해결사입니다. 시간을 들여 모든 가능성을 탐색하고, 가장 확실한 길을 찾아냅니다. 당신의 꼼꼼함은 실수를 용납하지 않는 가장 큰 무기입니다.", "action": "가끔은 당신의 직관을 믿고 조금 더 과감하게 나아가도 좋습니다. 모든 것이 완벽하게 준비되기를 기다리기보다, 때로는 빠른 시도가 더 나은 결과를 가져올 수도 있습니다."
-        },
-        "직관적인 해결사": {
-            "icon": "💡", "desc": "정석적인 방법보다는 번뜩이는 직관과 창의력으로 문제에 접근하는 유형입니다. 복잡한 분석보다는 핵심을 꿰뚫는 한 방을 선호하며, 과감하게 도전하는 것을 즐깁니다.", "action": "당신의 직관은 훌륭한 자산입니다. 여기에 약간의 '논리적 검증' 과정을 더한다면, 당신의 아이디어는 더욱 빛을 발할 것입니다. 제출하기 전 '왜 이것이 답일까?'라고 스스로에게 질문하는 습관을 가져보세요."
-        },
-        "성실한 등반가": {
-            "icon": "🧗", "desc": "어려운 문제 앞에서도 쉽게 포기하지 않는 끈기와 성실함을 가진 유형입니다. 과정 자체에 의미를 두는 당신의 꾸준함은 큰 잠재력을 의미합니다.", "action": "문제의 핵심 원리를 파악하는 연습을 꾸준히 한다면, 당신의 노력은 곧 뛰어난 결과로 이어질 것입니다."
-        },
-        "균형잡힌 해결사": {
-            "icon": "⚖️", "desc": "속도와 정확성의 균형을 잘 맞추는 안정적인 문제 해결사입니다. 상황에 따라 신중하게 접근하기도 하고, 때로는 빠르게 판단을 내리기도 하는 유연한 사고방식을 가졌습니다.", "action": "당신의 가장 큰 장점은 '균형'입니다. 다양한 문제 해결 전략을 꾸준히 접하며, 상황에 맞는 최적의 무기를 꺼내 드는 연습을 해보세요."
-        }
+        "신속한 전략가": {"icon": "⚡️", "desc": "핵심을 빠르게 파악하고 효율적으로 해결합니다.", "action": "빠른 속도 속 놓치는 게 없는지 한 번 더 확인해보세요."},
+        "신중한 탐험가": {"icon": "🗺️", "desc": "돌다리도 두들겨 보며 가장 확실한 길을 찾습니다.", "action": "가끔은 직관을 믿고 과감하게 시도해보세요."},
+        "직관적인 해결사": {"icon": "💡", "desc": "번뜩이는 직관과 창의력으로 접근합니다.", "action": "직관에 논리적 검증을 더하면 완벽합니다."},
+        "성실한 등반가": {"icon": "🧗", "desc": "쉽게 포기하지 않는 끈기로 문제를 해결합니다.", "action": "핵심 원리를 파악하는 연습이 큰 도움이 될 거예요."},
+        "균형잡힌 해결사": {"icon": "⚖️", "desc": "속도와 정확성의 균형이 잘 잡혀 있습니다.", "action": "다양한 전략을 상황에 맞게 사용하는 연습을 해보세요."}
     }
-    
-    # 4. 결과 카드 UI 렌더링
+
+    # UI 렌더링: 분석 결과 텍스트
     st.divider()
-    
     details = persona_descriptions.get(persona_type)
     if details:
         st.markdown(f"### {details['icon']} 당신의 문제 해결 스타일은: **{persona_type}**")
         st.markdown(f"> _{details['desc']}_")
-        
-        # 분석 근거 동적 생성
-        evidence_text = (f"당신은 **약 {total_time:.0f}초** 동안 **총 {total_problems}문제** 중 **{correct_answers}문제**를 맞혔고, "
-                         f"**{hint_count}번**의 힌트를 사용했습니다. 이 패턴을 바탕으로 당신의 스타일을 분석했습니다.")
+
+        evidence_text = (f"당신은 **약 {total_time:.0f}초** 동안 **{correct_answers}문제**를 맞혔고, "
+                         f"**{hint_count}번**의 힌트를 사용했습니다.")
         st.info(f"**📊 분석 근거:**\n{evidence_text}")
         st.warning(f"**💡 성장 팁:**\n{details['action']}")
 
-    # 5. [추가된 안내 문구] 데이터 기반 모델 고도화에 대한 설명 및 참여 독려
+    # --- [수정] 결과 이미지 즉시 표시 ---
+    st.divider()
+    st.subheader("💌 나의 결과 카드")
+
+    # 이미지 생성 데이터 준비
+    details["name"] = persona_type
+    stats_data = {"correct_rate": correct_rate, "total_time": total_time, "hint_count": hint_count}
+
+    # 이미지 생성 및 즉시 출력
+    image_bytes = create_result_image(details, stats_data)
+    st.image(image_bytes, caption="아래 버튼을 눌러 이미지를 저장하세요!")
+
+    # 다운로드 버튼
+    st.download_button(
+        label="결과 이미지 저장하기 📥",
+        data=image_bytes,
+        file_name=f"my_persona_{persona_type}.png",
+        mime="image/png"
+    )
+
+    # 분석 설명 (Expander)
     st.divider()
     with st.expander("👀 이 분석 결과는 어떻게 만들어졌나요?"):
-        st.markdown("""
-        현재 보시는 분석 결과는 초기 데이터를 바탕으로 저희가 설정한 **'규칙 기반 가이드라인'**에 따라 제공됩니다. 
-        이는 당신의 문제 해결 스타일을 이해하는 첫걸음입니다.
+        st.markdown("규칙 기반 가이드라인에 따라 제공됩니다. 데이터가 쌓이면 머신러닝 모델로 보다 더 고도화될 예정입니다.")
 
-        앞으로 더 많은 분들이 챌린지에 참여해주시면, **축적된 데이터는 머신러닝 모델을 통해 더욱 정교하고 다채로운 유형으로 진화**하게 됩니다. 
-        당신의 참여 하나하나가 세상을 더 잘 이해하는 지도를 만드는 데 소중한 발걸음이 됩니다.
-
-        **주변에 이 챌린지를 공유하여 더 똑똑한 분석 모델을 함께 만들어주세요!**
-        """)
-
-    # --- 6. [추가] 결과 공유 기능 ---
     st.divider()
-    st.subheader("💌 내 결과 공유하기")
+    st.subheader("🔗 친구에게 테스트 공유하기")
+    share_url = "https://project-insight-nfusfp3ngjmee73ad9jxh9.streamlit.app/"
 
-    if st.session_state.get('show_image', False):
-        # <<< 수정된 부분 >>>  -- 구버전에서도 동작하도록 st.expander 사용
-        # Streamlit 1.30 이상이면 원래대로 st.dialog 사용
-        if st.__version__ >= "1.30":
-            # ✔️ 최신 버전이면 기존 로직 그대로 사용 (컨텍스트 매니저)
-            with st.dialog("나의 문제 해결 스타일", dismissible=True):
-                # ------------------- 이미지·버튼 공통 로직 -------------------
-                details = persona_descriptions.get(persona_type)
-                details['name'] = persona_type
-                stats_data = {
-                    "correct_rate": correct_rate,
-                    "total_time": total_time,
-                    "hint_count": hint_count
-                }
-
-                image_bytes = create_result_image(details, stats_data)
-                st.image(image_bytes, caption="아래 버튼을 눌러 이미지를 저장하고 공유해보세요!")
-
-                st.download_button(
-                    label="이미지 저장하기 📥",
-                    data=image_bytes,
-                    file_name=f"my_persona_{persona_type}.png",
-                    mime="image/png"
-                )
-                # ----- 닫기 ----------
-                if st.button("닫기"):
-                    st.session_state.show_image = False
-                    st.rerun()
-        else:
-            # 👇 구버전에서는 st.expander 로 대체
-            with st.expander("💬 나의 문제 해결 스타일", expanded=True):
-                # ------------------- 이미지·버튼 공통 로직 (위와 동일) -------------------
-                details = persona_descriptions.get(persona_type)
-                details['name'] = persona_type
-                stats_data = {
-                    "correct_rate": correct_rate,
-                    "total_time": total_time,
-                    "hint_count": hint_count
-                }
-
-                image_bytes = create_result_image(details, stats_data)
-                st.image(image_bytes, caption="아래 버튼을 눌러 이미지를 저장하고 공유해보세요!")
-
-                st.download_button(
-                    label="이미지 저장하기 📥",
-                    data=image_bytes,
-                    file_name=f"my_persona_{persona_type}.png",
-                    mime="image/png"
-                )
-                # ----- 닫기 ----------
-                if st.button("닫기"):
-                    st.session_state.show_image = False
-                    st.rerun()
+    st.write("아래 주소 우측의 **복사 버튼(📄)**을 눌러 공유하세요!")
+    st.code(share_url, language="text")
